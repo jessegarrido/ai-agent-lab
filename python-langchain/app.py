@@ -1,14 +1,16 @@
+import logging
 import os
 import time
-import logging
 from datetime import datetime
-from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain.agents import create_agent
-from langchain_core.tools import Tool
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from langgraph.checkpoint.memory import MemorySaver
+from pathlib import Path
+
 import openai
+from dotenv import load_dotenv
+from langchain.agents import create_agent
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.tools import Tool
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
 
 # Load environment variables from .env file
 load_dotenv()
@@ -29,12 +31,12 @@ class AgentError(Exception):
 
 
 class RateLimitError(AgentError):
-    """Exception raised when API rate limit is hit (HTTP 429)."""
+    """Raise when API rate limit is hit (HTTP 429)."""
     pass
 
 
 class InputValidationError(AgentError):
-    """Exception raised when input validation fails."""
+    """Raise when input validation fails."""
     pass
 
 
@@ -44,7 +46,7 @@ class PerformanceMonitor:
 
     def __init__(self, slow_query_threshold: float = 10.0):
         self.slow_query_threshold = slow_query_threshold
-        self.metrics: list[dict] = []
+        self.metrics: list[dict[str, object]] = []
 
     def record_query(self, query: str, duration: float, tool_calls: int = 0) -> None:
         """Record a query's performance metrics."""
@@ -58,12 +60,16 @@ class PerformanceMonitor:
         self.metrics.append(entry)
         logger.info(
             "Query completed in %.3fs with %d tool call(s): %s",
-            duration, tool_calls, query[:80],
+            duration,
+            tool_calls,
+            query[:80],
         )
         if entry["slow"]:
             logger.warning(
                 "Slow query detected (%.3fs > %.1fs threshold): %s",
-                duration, self.slow_query_threshold, query[:120],
+                duration,
+                self.slow_query_threshold,
+                query[:120],
             )
 
     def summary(self) -> str:
@@ -92,8 +98,7 @@ ALLOWED_QUERY_CHARS = set(
 
 
 def validate_query(query: str) -> str:
-    """
-    Validate and sanitize a user query before sending to the AI.
+    """Validate and sanitize a user query before sending to the AI.
 
     Args:
         query: The raw user query string.
@@ -126,15 +131,14 @@ def validate_query(query: str) -> str:
 # ─── Tool Functions ──────────────────────────────────────────────────────────
 
 def calculator(expression: str) -> str:
-    """
-    Evaluate a mathematical expression safely and return the result as a string.
+    """Evaluate a mathematical expression safely and return the result.
 
-    Uses a restricted set of allowed characters and a restricted eval namespace
-    for improved security. Supports basic arithmetic: +, -, *, /, parentheses,
+    Use a restricted set of allowed characters and a restricted eval namespace
+    for improved security. Support basic arithmetic: +, -, *, /, parentheses,
     and decimals.
 
     Args:
-        expression: A string containing a mathematical expression (e.g., "25 * 4 + 10")
+        expression: A string containing a mathematical expression (e.g., "25 * 4 + 10").
 
     Returns:
         A string containing the result or an error message.
@@ -143,65 +147,61 @@ def calculator(expression: str) -> str:
         # Validate input characters
         allowed_chars = set("0123456789+-*/.() ")
         if not all(c in allowed_chars for c in expression):
-            return "❌ Error: Invalid characters in expression"
+            return "Error: Invalid characters in expression"
 
         # Additional safety: check for dangerous patterns
         dangerous_patterns = ["__", "import", "exec", "eval", "open", "file"]
         expression_lower = expression.lower()
         for pattern in dangerous_patterns:
             if pattern in expression_lower:
-                return f"❌ Error: Dangerous pattern '{pattern}' detected"
+                return f"Error: Dangerous pattern '{pattern}' detected"
 
         # Evaluate the expression in a restricted namespace
         safe_globals = {"__builtins__": {}}
-        result = eval(expression, safe_globals, {})
+        result = eval(expression, safe_globals, {})  # noqa: S307
         return str(result)
     except ZeroDivisionError:
-        return "❌ Error: Division by zero"
+        return "Error: Division by zero"
     except SyntaxError:
-        return "❌ Error: Invalid syntax in expression"
+        return "Error: Invalid syntax in expression"
     except Exception as e:
-        return f"❌ Error: {type(e).__name__}: {str(e)}"
+        return f"Error: {type(e).__name__}: {e}"
 
 
 def get_current_time(input_str: str) -> str:
-    """
-    Get the current date and time.
+    """Return the current date and time.
 
     Args:
-        input_str: Required by Tool interface (unused for this function)
+        input_str: Required by Tool interface (unused for this function).
 
     Returns:
-        A string containing the current date and time in format: YYYY-MM-DD HH:MM:SS
+        A string containing the current date and time in YYYY-MM-DD HH:MM:SS format.
     """
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def reverse_string(input_string: str) -> str:
-    """
-    Reverse a string and return the result.
+    """Reverse a string and return the result.
 
     Args:
-        input_string: A string to be reversed
+        input_string: A string to reverse.
 
     Returns:
-        The reversed string
+        The reversed string.
     """
     return input_string[::-1]
 
 
 def get_weather_by_date(date_str: str) -> str:
-    """
-    Get weather information for a given date.
+    """Return mock weather information for a given date.
 
-    Returns mock weather data based on the date provided. If the date matches
-    today's date, returns sunny weather; otherwise returns rainy weather.
+    If the date matches today, return sunny weather; otherwise return rainy weather.
 
     Args:
-        date_str: A date string in the format "YYYY-MM-DD"
+        date_str: A date string in the format "YYYY-MM-DD".
 
     Returns:
-        A string containing the weather information for the given date
+        A string containing the weather information for the given date.
     """
     try:
         today = datetime.now().strftime("%Y-%m-%d")
@@ -210,21 +210,19 @@ def get_weather_by_date(date_str: str) -> str:
         else:
             return "Rainy, 55°F"
     except Exception as e:
-        return f"❌ Error: {type(e).__name__}: {str(e)}"
+        return f"Error: {type(e).__name__}: {e}"
 
 
 def get_weather_by_city(city: str) -> str:
-    """
-    Get mock weather information for a given city.
+    """Return mock weather information for a given city.
 
-    Returns simulated weather data for major cities. For cities not in the
-    mock data, returns a default weather response.
+    For cities not in the mock data, return a default weather response.
 
     Args:
-        city: The name of the city to get weather for (e.g., "New York", "London")
+        city: The name of the city (e.g., "New York", "London").
 
     Returns:
-        A string containing the simulated weather information for the city
+        A string containing the simulated weather information for the city.
     """
     try:
         # Mock weather data for various cities
@@ -251,20 +249,19 @@ def get_weather_by_city(city: str) -> str:
         else:
             return f"Weather in {city.title()}: Partly Cloudy, 70°F (default forecast)"
     except Exception as e:
-        return f"❌ Error: {type(e).__name__}: {str(e)}"
+        return f"Error: {type(e).__name__}: {e}"
 
 
 def file_tool(operation: str) -> str:
-    """
-    Read from or write to a text file in the project directory.
+    """Read from or write to a text file in the project directory.
 
     Supports two operations:
-    - "read:<filename>" — reads the contents of the specified file
-    - "write:<filename>:<content>" — writes content to the specified file
+    - "read:<filename>" — read the contents of the specified file
+    - "write:<filename>:<content>" — write content to the specified file
 
     Args:
         operation: A string in the format "read:<filename>" or
-                    "write:<filename>:<content>"
+                    "write:<filename>:<content>".
 
     Returns:
         A string containing the file contents (for read) or a confirmation
@@ -278,13 +275,13 @@ def file_tool(operation: str) -> str:
             filename = parts[1].strip()
             # Security: only allow .txt files in the current directory
             if "/" in filename or "\\" in filename or ".." in filename:
-                return "❌ Error: Only files in the current directory are allowed"
+                return "Error: Only files in the current directory are allowed"
             if not filename.endswith(".txt"):
-                return "❌ Error: Only .txt files are supported"
-            if not os.path.exists(filename):
-                return f"❌ Error: File '{filename}' not found"
-            with open(filename, "r", encoding="utf-8") as f:
-                content = f.read()
+                return "Error: Only .txt files are supported"
+            file_path = Path(filename)
+            if not file_path.exists():
+                return f"Error: File '{filename}' not found"
+            content = file_path.read_text(encoding="utf-8")
             logger.info("File read: %s (%d chars)", filename, len(content))
             return f"Contents of {filename}:\n{content}"
 
@@ -293,42 +290,40 @@ def file_tool(operation: str) -> str:
             content = parts[2]
             # Security: only allow .txt files in the current directory
             if "/" in filename or "\\" in filename or ".." in filename:
-                return "❌ Error: Only files in the current directory are allowed"
+                return "Error: Only files in the current directory are allowed"
             if not filename.endswith(".txt"):
-                return "❌ Error: Only .txt files are supported"
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(content)
+                return "Error: Only .txt files are supported"
+            file_path = Path(filename)
+            file_path.write_text(content, encoding="utf-8")
             logger.info("File written: %s (%d chars)", filename, len(content))
-            return f"✅ Successfully wrote {len(content)} characters to {filename}"
+            return f"Successfully wrote {len(content)} characters to {filename}"
 
         else:
             return (
-                "❌ Error: Invalid operation format. "
+                "Error: Invalid operation format. "
                 "Use 'read:<filename>' or 'write:<filename>:<content>'"
             )
     except Exception as e:
         logger.error("File tool error: %s", e)
-        return f"❌ Error: {type(e).__name__}: {str(e)}"
+        return f"Error: {type(e).__name__}: {e}"
 
 
 def web_search(query: str) -> str:
-    """
-    Simulate a web search and return mock search results.
+    """Simulate a web search and return mock search results.
 
-    Provides simulated search results for common topics. For unknown topics,
-    returns a generic response.
+    For unknown topics, return a generic response.
 
     Args:
-        query: The search query string
+        query: The search query string.
 
     Returns:
-        A string containing simulated search results
+        A string containing simulated search results.
     """
     try:
         # Mock search results database
         search_results = {
             "python": (
-                "🐍 Python Programming Language\n"
+                "Python Programming Language\n"
                 "1. Python Official Site - https://www.python.org\n"
                 "2. Python Documentation - https://docs.python.org\n"
                 "3. Python Tutorial - W3Schools\n"
@@ -336,28 +331,28 @@ def web_search(query: str) -> str:
                 "simplicity and readability."
             ),
             "langchain": (
-                "🔗 LangChain Framework\n"
+                "LangChain Framework\n"
                 "1. LangChain Documentation - https://docs.langchain.com\n"
                 "2. LangChain GitHub - https://github.com/langchain-ai\n"
                 "3. LangChain Tutorials - Quick Start Guide\n"
                 "LangChain is a framework for building applications with LLMs."
             ),
             "ai": (
-                "🤖 Artificial Intelligence\n"
+                "Artificial Intelligence\n"
                 "1. AI Overview - Wikipedia\n"
                 "2. OpenAI - https://openai.com\n"
                 "3. AI News - Latest developments in AI\n"
                 "AI is the simulation of human intelligence by machines."
             ),
             "weather": (
-                "🌤️ Weather Information\n"
+                "Weather Information\n"
                 "1. National Weather Service - https://weather.gov\n"
                 "2. Weather.com - The Weather Channel\n"
                 "3. AccuWeather - https://accuweather.com\n"
                 "Current weather data available for locations worldwide."
             ),
             "github": (
-                "🐙 GitHub\n"
+                "GitHub\n"
                 "1. GitHub - https://github.com\n"
                 "2. GitHub Docs - https://docs.github.com\n"
                 "3. GitHub Models - AI model marketplace\n"
@@ -375,7 +370,7 @@ def web_search(query: str) -> str:
         # Default response for unknown queries
         logger.info("Web search for '%s' returned default results", query)
         return (
-            f"🔍 Search results for: '{query}'\n"
+            f"Search results for: '{query}'\n"
             "1. No exact matches found.\n"
             "2. Try refining your search terms.\n"
             "3. Related topics may be available.\n"
@@ -383,32 +378,30 @@ def web_search(query: str) -> str:
         )
     except Exception as e:
         logger.error("Web search error: %s", e)
-        return f"❌ Error: {type(e).__name__}: {str(e)}"
+        return f"Error: {type(e).__name__}: {e}"
 
 
 # ─── Main Application ───────────────────────────────────────────────────────
 
 def main():
-    """Main entry point for the LangChain AI Agent application."""
-    import time
-
-    logger.info("🤖 Python LangChain Agent Starting...")
-    print("🤖 Python LangChain Agent Starting...")
+    """Run the LangChain AI Agent application demo."""
+    logger.info("Python LangChain Agent Starting...")
+    print("Python LangChain Agent Starting...")
 
     # Check if GITHUB_TOKEN is set
     github_token = os.getenv("GITHUB_TOKEN")
     if not github_token:
         logger.error("GITHUB_TOKEN not found in environment variables")
-        print("\n❌ Error: GITHUB_TOKEN not found in environment variables!")
-        print("\n📋 To fix this, follow these steps:")
+        print("\nError: GITHUB_TOKEN not found in environment variables!")
+        print("\nTo fix this, follow these steps:")
         print("   1. Create a .env file in the project root directory")
         print("   2. Add your GitHub token: GITHUB_TOKEN=your_token_here")
         print("   3. Get a token from: https://github.com/settings/tokens")
-        print("\n💡 Tip: The .env file should NOT be committed to version control.\n")
+        print("\nTip: The .env file should NOT be committed to version control.\n")
         return
 
     logger.info("GitHub token loaded successfully")
-    print("✅ GitHub token loaded successfully!")
+    print("GitHub token loaded successfully!")
 
     # Create ChatOpenAI instance with retry configuration
     llm = ChatOpenAI(
@@ -419,7 +412,7 @@ def main():
         max_retries=3,
     )
     logger.info("ChatOpenAI client initialized")
-    print("🤖 ChatOpenAI client initialized successfully!")
+    print("ChatOpenAI client initialized successfully!")
 
     # Create a tools list
     tools = [
@@ -492,9 +485,11 @@ def main():
         ),
     ]
     logger.info("Tools loaded: %s", [t.name for t in tools])
-    print(f"🛠️ Tools loaded successfully! ({len(tools)} tools)")
+    print(f"Tools loaded successfully! ({len(tools)} tools)")
 
-    # Create agent with system message and conversation memory
+    # Create agent with system message and conversation memory.
+    # MemorySaver provides in-memory checkpointing so the agent remembers
+    # previous messages within the same thread, enabling multi-turn conversations.
     system_prompt = (
         "You are a professional and succinct AI assistant. "
         "When asked a question, use the available tools to provide accurate answers. "
@@ -502,12 +497,9 @@ def main():
         "time, string manipulation, weather lookups, file operations, and web search."
     )
 
-    # Extension Challenge #4: Conversation Memory
-    # MemorySaver provides in-memory checkpointing so the agent remembers
-    # previous messages within the same thread, enabling multi-turn conversations.
     memory = MemorySaver()
     logger.info("Conversation memory (MemorySaver) initialized")
-    print("🧠 Conversation memory initialized!")
+    print("Conversation memory initialized!")
 
     agent = create_agent(
         model=llm,
@@ -517,17 +509,17 @@ def main():
         debug=False,
     )
     logger.info("Agent created successfully with conversation memory")
-    print("⚙️ Agent created successfully!")
+    print("Agent created successfully!")
 
     # Initialize performance monitor
     perf = PerformanceMonitor(slow_query_threshold=10.0)
 
-    # Extension Challenge #4: Use a consistent thread_id so the agent
-    # remembers previous messages across queries in this session.
+    # Use a consistent thread_id so the agent remembers previous messages
+    # across queries in this session.
     config = {"configurable": {"thread_id": "demo-session-1"}}
     logger.info("Using conversation thread: %s", config["configurable"]["thread_id"])
 
-    # Create test queries covering all tools
+    # Test queries covering all tools
     queries = [
         "What time is it right now?",
         "What is 25 * 4 + 10?",
@@ -539,8 +531,8 @@ def main():
         "Read the file test_output.txt",
     ]
 
-    # Extension Challenge #4: Add a multi-turn conversational query that
-    # relies on the agent remembering previous context.
+    # Multi-turn conversational queries that rely on the agent
+    # remembering previous context.
     conversational_queries = [
         "My name is Alex. What time is it?",
         "What is 100 / 5?",
@@ -548,7 +540,7 @@ def main():
     ]
 
     print("\n" + "=" * 60)
-    print("📋 Part 1: Running individual tool queries")
+    print("Part 1: Running individual tool queries")
     print("=" * 60)
 
     # Iterate through queries with retry logic and performance tracking
@@ -559,19 +551,24 @@ def main():
             validated_query = validate_query(query)
         except InputValidationError as e:
             logger.warning("Input validation failed for query '%s': %s", query, e)
-            print(f"\n📝 Query: {query}")
-            print("─" * 50)
-            print(f"❌ Validation Error: {e}")
+            print(f"\nQuery: {query}")
+            print("-" * 50)
+            print(f"Validation Error: {e}")
             continue
 
-        print(f"\n📝 Query: {validated_query}")
-        print("─" * 50)
+        print(f"\nQuery: {validated_query}")
+        print("-" * 50)
 
         # Retry logic with exponential backoff
         for attempt in range(1, max_retries + 1):
             start_time = time.time()
             try:
-                logger.info("Sending query (attempt %d/%d): %s", attempt, max_retries, validated_query)
+                logger.info(
+                    "Sending query (attempt %d/%d): %s",
+                    attempt,
+                    max_retries,
+                    validated_query,
+                )
                 result = agent.invoke(
                     {"messages": [("user", validated_query)]},
                     config=config,
@@ -588,73 +585,88 @@ def main():
                 )
 
                 perf.record_query(validated_query, duration, tool_call_count)
-                print(f"✅ Result: {output}")
+                print(f"Result: {output}")
                 break  # Success, exit retry loop
 
-            # Extension Challenge #10: Detect HTTP 429 rate limit errors
+            # Detect HTTP 429 rate limit errors
             except openai.RateLimitError as e:
                 duration = time.time() - start_time
-                wait_time = 2 ** attempt  # Exponential backoff
+                wait_time = 2 ** attempt
                 logger.warning(
                     "HTTP 429 rate limit hit on attempt %d/%d, waiting %ds: %s",
-                    attempt, max_retries, wait_time, e,
+                    attempt,
+                    max_retries,
+                    wait_time,
+                    e,
                 )
                 if attempt < max_retries:
-                    print(f"⏳ Rate limited (HTTP 429), retrying in {wait_time}s...")
+                    print(f"Rate limited (HTTP 429), retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
-                    print(f"❌ Rate limit error after {max_retries} attempts: {e}")
+                    print(f"Rate limit error after {max_retries} attempts: {e}")
 
             except RateLimitError as e:
                 duration = time.time() - start_time
-                wait_time = 2 ** attempt  # Exponential backoff
+                wait_time = 2 ** attempt
                 logger.warning(
                     "Rate limited on attempt %d/%d, waiting %ds: %s",
-                    attempt, max_retries, wait_time, e,
+                    attempt,
+                    max_retries,
+                    wait_time,
+                    e,
                 )
                 if attempt < max_retries:
-                    print(f"⏳ Rate limited, retrying in {wait_time}s...")
+                    print(f"Rate limited, retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
-                    print(f"❌ Rate limit error after {max_retries} attempts: {e}")
+                    print(f"Rate limit error after {max_retries} attempts: {e}")
 
             except Exception as e:
                 duration = time.time() - start_time
                 logger.error(
                     "Error on attempt %d/%d for query '%s': %s - %s",
-                    attempt, max_retries, validated_query, type(e).__name__, e,
+                    attempt,
+                    max_retries,
+                    validated_query,
+                    type(e).__name__,
+                    e,
                 )
                 if attempt < max_retries:
                     wait_time = 2 ** attempt
-                    print(f"⚠️ Error, retrying in {wait_time}s... ({type(e).__name__})")
+                    print(f"Error, retrying in {wait_time}s... ({type(e).__name__})")
                     time.sleep(wait_time)
                 else:
-                    print(f"❌ Error: {type(e).__name__}: {str(e)}")
+                    print(f"Error: {type(e).__name__}: {e}")
 
     # ── Part 2: Conversational Memory Demo ──────────────────────────────────
     print("\n" + "=" * 60)
-    print("📋 Part 2: Conversational Memory Demo")
+    print("Part 2: Conversational Memory Demo")
     print("=" * 60)
-    print("💡 These queries share a conversation thread, so the agent")
-    print("   should remember context from previous messages.\n")
+    print("These queries share a conversation thread, so the agent")
+    print("should remember context from previous messages.\n")
 
     for query in conversational_queries:
         try:
             validated_query = validate_query(query)
         except InputValidationError as e:
             logger.warning("Input validation failed: %s", e)
-            print(f"\n📝 Query: {query}")
-            print("─" * 50)
-            print(f"❌ Validation Error: {e}")
+            print(f"\nQuery: {query}")
+            print("-" * 50)
+            print(f"Validation Error: {e}")
             continue
 
-        print(f"📝 Query: {validated_query}")
-        print("─" * 50)
+        print(f"Query: {validated_query}")
+        print("-" * 50)
 
         for attempt in range(1, max_retries + 1):
             start_time = time.time()
             try:
-                logger.info("Sending conversational query (attempt %d/%d): %s", attempt, max_retries, validated_query)
+                logger.info(
+                    "Sending conversational query (attempt %d/%d): %s",
+                    attempt,
+                    max_retries,
+                    validated_query,
+                )
                 # Use the SAME config/thread_id so the agent remembers context
                 result = agent.invoke(
                     {"messages": [("user", validated_query)]},
@@ -667,33 +679,33 @@ def main():
                     if hasattr(msg, "tool_calls") and msg.tool_calls
                 )
                 perf.record_query(validated_query, duration, tool_call_count)
-                print(f"✅ Result: {output}")
+                print(f"Result: {output}")
                 break
 
             except openai.RateLimitError as e:
                 wait_time = 2 ** attempt
                 logger.warning("HTTP 429 rate limit hit: %s", e)
                 if attempt < max_retries:
-                    print(f"⏳ Rate limited (HTTP 429), retrying in {wait_time}s...")
+                    print(f"Rate limited (HTTP 429), retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
-                    print(f"❌ Rate limit error after {max_retries} attempts: {e}")
+                    print(f"Rate limit error after {max_retries} attempts: {e}")
 
             except Exception as e:
                 duration = time.time() - start_time
                 logger.error("Conversational query error: %s - %s", type(e).__name__, e)
                 if attempt < max_retries:
                     wait_time = 2 ** attempt
-                    print(f"⚠️ Error, retrying in {wait_time}s... ({type(e).__name__})")
+                    print(f"Error, retrying in {wait_time}s... ({type(e).__name__})")
                     time.sleep(wait_time)
                 else:
-                    print(f"❌ Error: {type(e).__name__}: {str(e)}")
+                    print(f"Error: {type(e).__name__}: {e}")
 
     # Print performance summary
-    print("\n" + "─" * 50)
-    print("📊 Performance Summary:")
+    print("\n" + "-" * 50)
+    print("Performance Summary:")
     print(perf.summary())
-    print("\n🎉 Agent demo complete!")
+    print("\nAgent demo complete!")
 
 
 if __name__ == "__main__":
